@@ -352,6 +352,13 @@ body{font-family:'Montserrat',sans-serif;background:var(--cream);color:var(--dee
 
 /* ─── TOGGLE ─── */
 .toggle-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.repeat-chip{
+  padding:7px 16px;border:1.5px solid var(--blush);border-radius:50px;
+  background:var(--white);font-family:'Montserrat',sans-serif;font-size:.72rem;
+  letter-spacing:.06em;cursor:pointer;transition:all .2s;color:var(--mauve);
+}
+.repeat-chip.active{background:var(--deep);color:white;border-color:var(--deep);}
+.repeat-chip:hover:not(.active){border-color:var(--gold);color:var(--deep);}
 .toggle{position:relative;width:40px;height:22px;flex-shrink:0;}
 .toggle input{opacity:0;width:0;height:0;position:absolute;}
 .toggle-slider{position:absolute;inset:0;background:var(--blush);
@@ -714,6 +721,34 @@ a.link:hover{text-decoration:underline;}
       <label class="toggle"><input type="checkbox" id="mc_taller"><span class="toggle-slider"></span></label>
       <span class="toggle-label">Grupo suelto / Taller (no descuenta del plan)</span>
     </div>
+
+    <!-- RECURRENCE SECTION -->
+    <div style="border-top:1px solid var(--blush);margin:16px 0 14px;padding-top:16px">
+      <div class="toggle-row" style="margin-bottom:0">
+        <label class="toggle"><input type="checkbox" id="mc_repeat" onchange="toggleRepeatOptions()"><span class="toggle-slider"></span></label>
+        <span class="toggle-label" style="font-weight:500">Repetir esta clase</span>
+      </div>
+    </div>
+
+    <div id="mc_repeat_options" style="display:none;background:var(--cream);border-radius:12px;padding:16px;margin-bottom:16px">
+      <div class="fg" style="margin-bottom:12px">
+        <label>Repetir cada</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="repeat-chip active" data-val="weekly" onclick="selectRepeat('weekly',this)">Semana</button>
+          <button type="button" class="repeat-chip" data-val="biweekly" onclick="selectRepeat('biweekly',this)">2 semanas</button>
+          <button type="button" class="repeat-chip" data-val="monthly" onclick="selectRepeat('monthly',this)">Mes completo</button>
+        </div>
+        <input type="hidden" id="mc_repeat_freq" value="weekly">
+      </div>
+
+      <div class="fg" style="margin-bottom:12px" id="mc_repeat_until_wrap">
+        <label>Repetir hasta</label>
+        <input type="date" id="mc_repeat_until">
+      </div>
+
+      <div id="mc_repeat_preview" style="font-size:.78rem;color:var(--mauve);line-height:1.7;margin-top:4px"></div>
+    </div>
+
     <div style="display:flex;gap:10px">
       <button class="btn btn-primary" style="flex:1" onclick="doSaveClass()">
         <span class="spin" id="spinSaveClass"></span>Guardar
@@ -1803,6 +1838,139 @@ function checkOverlap(date, time, duration, excludeId) {
   return conflicts;
 }
 
+
+// ═══════════════════════════════════════════════════
+//  RECURRENCE SYSTEM
+// ═══════════════════════════════════════════════════
+
+function toggleRepeatOptions() {
+  const on = document.getElementById('mc_repeat').checked;
+  const opts = document.getElementById('mc_repeat_options');
+  opts.style.display = on ? 'block' : 'none';
+  if(on) {
+    // Set default until date: end of current month
+    const date = document.getElementById('mc_date').value;
+    if(date) {
+      const d = new Date(date+'T12:00:00');
+      const freq = document.getElementById('mc_repeat_freq').value;
+      setDefaultUntilDate(d, freq);
+    }
+    updateRepeatPreview();
+  }
+}
+
+function selectRepeat(val, el) {
+  document.querySelectorAll('.repeat-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('mc_repeat_freq').value = val;
+  const date = document.getElementById('mc_date').value;
+  if(date) setDefaultUntilDate(new Date(date+'T12:00:00'), val);
+  updateRepeatPreview();
+}
+
+function setDefaultUntilDate(startDate, freq) {
+  const until = document.getElementById('mc_repeat_until');
+  let end = new Date(startDate);
+  if(freq === 'weekly' || freq === 'biweekly') {
+    // End of current month
+    end = new Date(startDate.getFullYear(), startDate.getMonth()+1, 0);
+  } else if(freq === 'monthly') {
+    // End of next month
+    end = new Date(startDate.getFullYear(), startDate.getMonth()+2, 0);
+  }
+  until.value = end.toISOString().split('T')[0];
+  updateRepeatPreview();
+}
+
+function updateRepeatPreview() {
+  const date   = document.getElementById('mc_date').value;
+  const until  = document.getElementById('mc_repeat_until').value;
+  const freq   = document.getElementById('mc_repeat_freq').value;
+  const prev   = document.getElementById('mc_repeat_preview');
+  if(!date || !until || !prev) return;
+
+  const dates = generateRepeatDates(date, until, freq);
+  if(!dates.length) { prev.textContent = ''; return; }
+
+  const labels = {weekly:'cada semana', biweekly:'cada 2 semanas', monthly:'todos los días equivalentes del mes'};
+  const time   = document.getElementById('mc_time').value;
+  const dur    = document.getElementById('mc_dur').value;
+
+  prev.innerHTML = `
+    <div style="color:var(--deep);font-weight:500;margin-bottom:4px">
+      Se crearán <strong>${dates.length}</strong> clases (${labels[freq]}):
+    </div>
+    ${dates.slice(0,6).map(d => {
+      const dt = new Date(d+'T12:00:00');
+      return `<span style="display:inline-block;background:var(--white);border:1px solid var(--blush);
+        border-radius:6px;padding:2px 8px;margin:2px;font-size:.72rem">
+        ${dt.toLocaleDateString('es-DO',{weekday:'short',day:'numeric',month:'short'})}
+        ${time?fmt12h(time):''}
+      </span>`;
+    }).join('')}
+    ${dates.length > 6 ? `<span style="font-size:.72rem;color:var(--mauve)">+${dates.length-6} más...</span>` : ''}
+  `;
+}
+
+function generateRepeatDates(startDate, untilDate, freq) {
+  const dates = [];
+  const start = new Date(startDate+'T12:00:00');
+  const until = new Date(untilDate+'T12:00:00');
+  let current = new Date(start);
+
+  // Skip the first date (it's the base class being created)
+  if(freq === 'weekly') {
+    current.setDate(current.getDate() + 7);
+    while(current <= until) {
+      dates.push(current.toISOString().split('T')[0]);
+      current.setDate(current.getDate() + 7);
+    }
+  } else if(freq === 'biweekly') {
+    current.setDate(current.getDate() + 14);
+    while(current <= until) {
+      dates.push(current.toISOString().split('T')[0]);
+      current.setDate(current.getDate() + 14);
+    }
+  } else if(freq === 'monthly') {
+    // Same weekday of every week in the target months
+    const targetDow = start.getDay(); // 0=Sun, 1=Mon...
+    const startMonth = start.getMonth();
+    const untilMonth = until.getMonth();
+    const untilYear  = until.getFullYear();
+
+    for(let yr = start.getFullYear(); yr <= untilYear; yr++) {
+      const mStart = (yr === start.getFullYear()) ? startMonth : 0;
+      const mEnd   = (yr === untilYear) ? untilMonth : 11;
+      for(let mo = mStart; mo <= mEnd; mo++) {
+        // Get all occurrences of targetDow in this month
+        const daysInMonth = new Date(yr, mo+1, 0).getDate();
+        for(let day = 1; day <= daysInMonth; day++) {
+          const candidate = new Date(yr, mo, day, 12);
+          if(candidate.getDay() === targetDow) {
+            const iso = candidate.toISOString().split('T')[0];
+            // Skip the original date
+            if(iso !== startDate && candidate <= until) {
+              dates.push(iso);
+            }
+          }
+        }
+      }
+    }
+  }
+  return dates;
+}
+
+// Listen for date/time changes to update preview
+document.addEventListener('change', e => {
+  if(['mc_date','mc_time','mc_dur','mc_repeat_until'].includes(e.target?.id)) {
+    if(document.getElementById('mc_repeat')?.checked) updateRepeatPreview();
+    if(e.target.id === 'mc_date' && document.getElementById('mc_repeat')?.checked) {
+      const freq = document.getElementById('mc_repeat_freq').value;
+      setDefaultUntilDate(new Date(e.target.value+'T12:00:00'), freq);
+    }
+  }
+});
+
 // ─── CLASES ───
 function renderAdminClases() {
   document.getElementById('atab-clases').innerHTML=`
@@ -1948,10 +2116,32 @@ function doSaveClass() {
   } else {
     cls.push({id:'c'+Date.now(),...data});
   }
-  DB.set('classes',cls);
-  spin('spinSaveClass',false);
-  closeModal('mClass');
-  showToast(editClassId?'Clase actualizada ✓':'Clase creada 🌸');
+  // ── Handle recurrence ──
+  const isRepeat = document.getElementById('mc_repeat')?.checked && !editClassId;
+  if(isRepeat) {
+    const freq      = document.getElementById('mc_repeat_freq').value;
+    const untilDate = document.getElementById('mc_repeat_until').value;
+    const repeatDates = generateRepeatDates(data.date, untilDate, freq);
+
+    let created = 0;
+    for(const rDate of repeatDates) {
+      // Check overlap for each repeated date
+      const conflicts = checkOverlap(rDate, data.time, data.duration, null);
+      if(conflicts.length === 0) {
+        cls.push({ id:'c'+Date.now()+'-'+created, ...data, date:rDate });
+        created++;
+      }
+    }
+    DB.set('classes', cls);
+    spin('spinSaveClass',false);
+    closeModal('mClass');
+    showToast(`✓ ${1 + created} clases creadas${created < repeatDates.length ? ` (${repeatDates.length - created} omitidas por conflicto)` : ''}`);
+  } else {
+    DB.set('classes',cls);
+    spin('spinSaveClass',false);
+    closeModal('mClass');
+    showToast(editClassId?'Clase actualizada ✓':'Clase creada 🌸');
+  }
   renderAdminClasesList();
 }
 
