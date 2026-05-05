@@ -734,41 +734,61 @@ border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;disp
     </div>
     <div class="fg"><label>Notas (opcional)</label>
       <input type="text" id="mc_notes" placeholder="Ej: Traer calcetines antideslizantes"></div>
-    <div class="toggle-row">
-      <label class="toggle"><input type="checkbox" id="mc_active" checked><span class="toggle-slider"></span></label>
-      <span class="toggle-label">Clase activa (visible para alumnas)</span>
-    </div>
-    <div class="toggle-row">
-      <label class="toggle"><input type="checkbox" id="mc_taller"><span class="toggle-slider"></span></label>
-      <span class="toggle-label">Grupo suelto / Taller (no descuenta del plan)</span>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:12px 14px;
+        background:var(--cream);border-radius:10px;border:1.5px solid var(--blush)">
+        <input type="checkbox" id="mc_active" checked
+          style="width:18px;height:18px;accent-color:var(--deep);cursor:pointer;flex-shrink:0">
+        <span style="font-size:.84rem;color:var(--deep)">Clase activa (visible para alumnas)</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:12px 14px;
+        background:var(--cream);border-radius:10px;border:1.5px solid var(--blush)">
+        <input type="checkbox" id="mc_taller"
+          style="width:18px;height:18px;accent-color:var(--deep);cursor:pointer;flex-shrink:0">
+        <span style="font-size:.84rem;color:var(--deep)">Grupo suelto / Taller (no descuenta del plan)</span>
+      </label>
     </div>
 
 ```
 <!-- RECURRENCE SECTION -->
-<div style="border-top:1px solid var(--blush);margin:16px 0 14px;padding-top:16px">
-  <div class="toggle-row" style="margin-bottom:0">
-    <label class="toggle"><input type="checkbox" id="mc_repeat" onchange="toggleRepeatOptions()"><span class="toggle-slider"></span></label>
-    <span class="toggle-label" style="font-weight:500">Repetir esta clase</span>
-  </div>
+<div style="border-top:1px solid var(--blush);margin:16px 0 0;padding-top:16px">
+  <button type="button" id="mc_repeat_btn"
+    onclick="toggleRepeatOptions()"
+    style="width:100%;display:flex;align-items:center;justify-content:space-between;
+      padding:13px 16px;border:1.5px solid var(--blush);border-radius:10px;
+      background:var(--white);cursor:pointer;font-family:'Montserrat',sans-serif;
+      font-size:.82rem;color:var(--deep);transition:all .2s;text-align:left;
+      -webkit-appearance:none;appearance:none;">
+    <span style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:1rem">🔁</span>
+      <span>Repetir esta clase</span>
+    </span>
+    <span id="mc_repeat_indicator"
+      style="font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;
+      background:var(--blush);color:var(--mauve);padding:3px 10px;border-radius:20px">
+      No
+    </span>
+  </button>
+  <input type="hidden" id="mc_repeat" value="0">
 </div>
 
-<div id="mc_repeat_options" style="display:none;background:var(--cream);border-radius:12px;padding:16px;margin-bottom:16px">
-  <div class="fg" style="margin-bottom:12px">
-    <label>Repetir cada</label>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button type="button" class="repeat-chip active" data-val="weekly" onclick="selectRepeat('weekly',this)">Semana</button>
-      <button type="button" class="repeat-chip" data-val="biweekly" onclick="selectRepeat('biweekly',this)">2 semanas</button>
-      <button type="button" class="repeat-chip" data-val="monthly" onclick="selectRepeat('monthly',this)">Mes completo</button>
+<div id="mc_repeat_options" style="display:none;background:var(--cream);border-radius:0 0 12px 12px;padding:16px;margin-bottom:16px;border:1.5px solid var(--blush);border-top:none">
+  <div class="fg" style="margin-bottom:14px">
+    <label>Frecuencia</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+      <button type="button" class="repeat-chip active" onclick="selectRepeat('weekly',this)">Cada semana</button>
+      <button type="button" class="repeat-chip" onclick="selectRepeat('biweekly',this)">Cada 2 semanas</button>
+      <button type="button" class="repeat-chip" onclick="selectRepeat('monthly',this)">Mes completo</button>
     </div>
     <input type="hidden" id="mc_repeat_freq" value="weekly">
   </div>
 
-  <div class="fg" style="margin-bottom:12px" id="mc_repeat_until_wrap">
+  <div class="fg" style="margin-bottom:12px">
     <label>Repetir hasta</label>
-    <input type="date" id="mc_repeat_until">
+    <input type="date" id="mc_repeat_until" style="background:var(--white)">
   </div>
 
-  <div id="mc_repeat_preview" style="font-size:.78rem;color:var(--mauve);line-height:1.7;margin-top:4px"></div>
+  <div id="mc_repeat_preview" style="font-size:.78rem;color:var(--mauve);line-height:1.8;margin-top:4px"></div>
 </div>
 
 <div style="display:flex;gap:10px">
@@ -1892,18 +1912,37 @@ function checkOverlap(date, time, duration, excludeId) {
 // ═══════════════════════════════════════════════════
 
 function toggleRepeatOptions() {
-  const on = document.getElementById('mc_repeat').checked;
+  const repeatInput = document.getElementById('mc_repeat');
+  const isOn = repeatInput.value === '1';
+  const newVal = isOn ? '0' : '1';
+  repeatInput.value = newVal;
+
   const opts = document.getElementById('mc_repeat_options');
-  opts.style.display = on ? 'block' : 'none';
-  if(on) {
-    // Set default until date: end of current month
+  const btn  = document.getElementById('mc_repeat_btn');
+  const ind  = document.getElementById('mc_repeat_indicator');
+
+  opts.style.display = newVal === '1' ? 'block' : 'none';
+
+  if(newVal === '1') {
+    btn.style.borderColor = 'var(--deep)';
+    btn.style.borderBottomLeftRadius = '0';
+    btn.style.borderBottomRightRadius = '0';
+    ind.style.background = 'var(--deep)';
+    ind.style.color = 'white';
+    ind.textContent = 'Sí';
     const date = document.getElementById('mc_date').value;
     if(date) {
-      const d = new Date(date+'T12:00:00');
       const freq = document.getElementById('mc_repeat_freq').value;
-      setDefaultUntilDate(d, freq);
+      setDefaultUntilDate(new Date(date+'T12:00:00'), freq);
     }
     updateRepeatPreview();
+  } else {
+    btn.style.borderColor = 'var(--blush)';
+    btn.style.borderBottomLeftRadius = '10px';
+    btn.style.borderBottomRightRadius = '10px';
+    ind.style.background = 'var(--blush)';
+    ind.style.color = 'var(--mauve)';
+    ind.textContent = 'No';
   }
 }
 
@@ -2165,7 +2204,7 @@ function doSaveClass() {
     cls.push({id:'c'+Date.now(),...data});
   }
   // ── Handle recurrence ──
-  const isRepeat = document.getElementById('mc_repeat')?.checked && !editClassId;
+  const isRepeat = document.getElementById('mc_repeat')?.value === '1' && !editClassId;
   if(isRepeat) {
     const freq      = document.getElementById('mc_repeat_freq').value;
     const untilDate = document.getElementById('mc_repeat_until').value;
