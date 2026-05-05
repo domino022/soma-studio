@@ -1459,6 +1459,12 @@ function showDaySlots(day) {
     const full=bk>=c.spots;
     const mine=clientBooked(c.id);
     let badge='', btn='';
+    // Check if this class is in a different month than current calendar
+    const cParts=c.date.split('-');
+    const cYear=parseInt(cParts[0]),cMonth=parseInt(cParts[1])-1;
+    const isFutureMonth=(cYear>calY)||(cYear===calY&&cMonth>calM);
+    const isPastMonth=(cYear<calY)||(cYear===calY&&cMonth<calM);
+
     if(mine) {
       badge=`<span class="badge badge-ok" style="font-size:.72rem;padding:5px 12px">✓ Reservada</span>`;
       btn=canCancel(c.id)
@@ -1466,23 +1472,31 @@ function showDaySlots(day) {
         :`<span class="badge" style="background:#fde8e8;color:#c85555;margin-top:6px;display:inline-block;padding:4px 10px">No cancelable</span>`;
     } else if(full) {
       badge=`<span class="badge badge-full">Sin cupo</span>`;
+    } else if(isFutureMonth) {
+      // Future month — can't book yet, show which month
+      const monthName=MONTHS[cMonth];
+      badge=`<span class="badge" style="background:#e8edf8;color:#3a5ca0;padding:4px 10px">
+        📅 Disponible en ${monthName}
+      </span>`;
+    } else if(isPastMonth) {
+      badge=`<span class="badge" style="background:var(--blush);color:var(--mauve);padding:4px 10px">Mes pasado</span>`;
     } else if(left<=0&&!c.isTaller) {
-      badge=`<span class="badge" style="background:#fdf0e8;color:#c87030">Límite alcanzado</span>`;
+      badge=`<span class="badge" style="background:#fdf0e8;color:#c87030">Límite de plan alcanzado</span>`;
     } else {
       btn=`<button class="btn btn-rose btn-sm" 
         style="min-width:90px"
         onclick="openBookModal('${c.id}')">Reservar</button>`;
     }
     if(c.isTaller) badge+=` <span class="badge badge-taller" style="margin-left:4px">Taller</span>`;
-    return `<div class="slot-card ${mine?'booked':''} ${full&&!mine?'full':''}">
+    return `<div class="slot-card ${mine?'booked':''} ${full&&!mine?'full':''}" id="slot-${c.id}">
       <div class="slot-info">
         <div class="slot-time">${fmt12h(c.time)} · ${c.duration} min</div>
         <div class="slot-class-name">${discTag(c.type)}</div>
         <div class="slot-teacher">👩‍🏫 ${teacherName(c.teacherId)}</div>
         ${c.notes?`<div class="slot-notes">📝 ${c.notes}</div>`:''}
       </div>
-      <div class="slot-right">
-        <div class="slot-spots ${full?'spots-full':''}">${bk}/${c.spots}</div>
+      <div class="slot-right" id="slot-right-${c.id}">
+        <div class="slot-spots ${full?'spots-full':''}" id="slot-spots-${c.id}">${bk}/${c.spots}</div>
         ${badge}<br>${btn}
       </div>
     </div>`;
@@ -1538,11 +1552,28 @@ function doBook(classId) {
     status:'active',bookedAt:new Date().toISOString()});
   DB.set('bookings',bookings);
   closeModal('mBook');
-  const d=parseInt(c.date.split('-')[2]);
-  // Refresh immediately — slot card updates to show "✓ Agendada"
+  
+  // Update slot card IN PLACE immediately — no need to reopen modal
+  const slotRight = document.getElementById('slot-right-'+classId);
+  const slotSpots = document.getElementById('slot-spots-'+classId);
+  const slotCard  = document.getElementById('slot-'+classId);
+  
+  if(slotRight) {
+    const newBk = bookingsForClass(classId).length;
+    if(slotSpots) slotSpots.textContent = `${newBk}/${c.spots}`;
+    slotRight.innerHTML = `
+      <div class="slot-spots" id="slot-spots-${classId}">${newBk}/${c.spots}</div>
+      <span class="badge badge-ok" style="font-size:.72rem;padding:5px 12px;display:inline-block;margin:4px 0">✓ Reservada</span><br>
+      ${canCancel(classId)
+        ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="doCancelBooking('${classId}')">Cancelar</button>`
+        : `<span class="badge" style="background:#fde8e8;color:#c85555;margin-top:6px;display:inline-block;padding:4px 10px">No cancelable</span>`
+      }
+    `;
+    if(slotCard) slotCard.className = 'slot-card booked';
+  }
+  
   renderProgress();
   renderCalendar();
-  showDaySlots(d);
   showToast('¡Clase reservada! Te esperamos 🌸');
 }
 
@@ -1553,10 +1584,31 @@ function doCancelBooking(classId) {
   const i=bookings.findIndex(b=>b.classId===classId&&b.clientId===CU.id&&b.status==='active');
   if(i>=0) { bookings[i].status='cancelled'; DB.set('bookings',bookings); }
   showToast('Reserva cancelada');
-  const c=(DB.get('classes')||[]).find(c=>c.id===classId);
-  if(c) showDaySlots(parseInt(c.date.split('-')[2]));
-  else closeModal('mDaySlots');
-  renderProgress(); renderCalendar();
+  const cc=(DB.get('classes')||[]).find(c=>c.id===classId);
+  if(cc) {
+    // Update slot card in place
+    const slotCard2  = document.getElementById('slot-'+classId);
+    const slotRight2 = document.getElementById('slot-right-'+classId);
+    const slotSpots2 = document.getElementById('slot-spots-'+classId);
+    const bk2 = bookingsForClass(classId).length;
+    const plan2 = clientPlan();
+    const used2 = clientBookingsThisMonth().length;
+    const max2  = plan2?(plan2.classes>=99?9999:plan2.classes):0;
+    const left2 = Math.max(0,max2-used2);
+    if(slotRight2) {
+      if(slotSpots2) slotSpots2.textContent=`${bk2}/${cc.spots}`;
+      slotRight2.innerHTML = `
+        <div class="slot-spots" id="slot-spots-${classId}">${bk2}/${cc.spots}</div>
+        ${left2>0||cc.isTaller
+          ? `<button class="btn btn-rose btn-sm" style="min-width:90px;margin-top:4px" onclick="openBookModal('${classId}')">Reservar</button>`
+          : `<span class="badge" style="background:#fdf0e8;color:#c87030">Límite de plan alcanzado</span>`
+        }
+      `;
+      if(slotCard2) slotCard2.className='slot-card';
+    }
+    renderProgress();
+    renderCalendar();
+  }
 }
 
 function renderProgress() {
