@@ -91,7 +91,7 @@ font-size:.68rem;color:var(–mauve);cursor:pointer;transition:all .2s;letter-sp
 .btn-exit:hover{background:var(–blush);}
 
 /* ─── CONTAINER ─── */
-.container{max-width:860px;margin:0 auto;padding:22px 16px 90px;}
+.container{max-width:860px;margin:0 auto;padding:16px 10px 90px;}
 
 /* ─── TOAST ─── */
 #toast{
@@ -224,13 +224,14 @@ font-weight:400;letter-spacing:.06em;}
 border-radius:50%;cursor:pointer;font-size:1rem;color:var(–mauve);
 display:flex;align-items:center;justify-content:center;transition:all .18s;}
 .nav-btn:hover{background:var(–blush);}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
-.cal-dow{text-align:center;font-size:.62rem;letter-spacing:.1em;
-text-transform:uppercase;color:var(–mauve);padding:5px 0 8px;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;width:100%;}
+.cal-dow{text-align:center;font-size:.58rem;letter-spacing:.04em;
+text-transform:uppercase;color:var(–mauve);padding:4px 0 7px;}
 .cal-day{
-aspect-ratio:1;border-radius:10px;display:flex;flex-direction:column;
-align-items:center;justify-content:center;font-size:.82rem;cursor:pointer;
+aspect-ratio:1;border-radius:8px;display:flex;flex-direction:column;
+align-items:center;justify-content:center;font-size:.78rem;cursor:pointer;
 transition:all .16s;border:1.5px solid transparent;background:var(–white);gap:2px;
+min-width:0;overflow:hidden;
 }
 .cal-day.empty{background:transparent;cursor:default;border-color:transparent;}
 .cal-day.today{border-color:var(–gold);}
@@ -537,8 +538,8 @@ border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;disp
   <div class="container">
     <div class="progress-box">
       <div class="progress-label">Clases agendadas este mes</div>
-      <div class="progress-bar"><div class="progress-fill" id="cProgressFill"></div></div>
-      <div class="progress-count" id="cProgressCount">—</div>
+      <div class="progress-bar"><div class="progress-fill" id="cProgressFill" style="width:0%"></div></div>
+      <div class="progress-count" id="cProgressCount" style="color:var(--mauve);font-size:.8rem">Cargando plan...</div>
     </div>
     <div class="tabs">
       <button class="tab-btn active" onclick="switchClientTab('cal',this)">Calendario</button>
@@ -1320,6 +1321,10 @@ function loadClientApp() {
   // Show app shell
   document.getElementById('cApp').style.display='block';
   // Set name
+  // Refresh CU from DB to get latest plan assignments from Sheets
+  const freshClients = DB.get('clients')||[];
+  const freshCU = freshClients.find(c=>c.id===CU.id);
+  if(freshCU) CU = freshCU;
   document.getElementById('cHeaderName').textContent=
     CU.firstname || CU.name.split(' ')[0];
   const plan=clientPlan();
@@ -1613,13 +1618,18 @@ function doCancelBooking(classId) {
 
 function renderProgress() {
   const plan=clientPlan();
-  if(!plan) return;
+  const fill=document.getElementById('cProgressFill');
+  const count=document.getElementById('cProgressCount');
+  if(!plan) {
+    if(fill) fill.style.width='0%';
+    if(count) { count.textContent='Sin plan activo este mes'; count.style.color='var(--mauve)'; count.style.fontSize='.8rem'; }
+    return;
+  }
   const used=clientBookingsThisMonth().length;
   const max=plan.classes>=99?'∞':plan.classes;
   const pct=plan.classes>=99?40:Math.min(100,(used/plan.classes)*100);
-  document.getElementById('cProgressFill').style.width=pct+'%';
-  document.getElementById('cProgressCount').textContent=
-    `${used} de ${max} clases · ${plan.name}`;
+  if(fill) fill.style.width=pct+'%';
+  if(count) { count.textContent=`${used} de ${max} clases · ${plan.name}`; count.style.color='var(--deep)'; count.style.fontSize='.82rem'; }
 }
 
 function switchClientTab(tab, btn) {
