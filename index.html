@@ -933,19 +933,24 @@ const API_TOKEN = 'de58fd7996baaa6ca5161fee72cef1ba9574e457e43bbaaf6906bf026b9bc
 // localStorage persists between deploys — data comes from Google Sheets
 // Admin password validated in Google Apps Script backend
 // Never stored or visible in this file
+async function sha256Client(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function checkAdminPass(input) {
-  // Verificación 100% en el backend — nunca local
-  // Si no hay conexión, no se puede entrar (más seguro)
+  // Hashea en cliente antes de enviar — nunca viaja la contraseña en texto plano
+  // Usa GET para evitar el problema de body perdido en redirects de Google Apps Script
   if(!GAS_URL) {
     showToast('Sin conexión al servidor');
     return false;
   }
   try {
-    const res = await fetch(GAS_URL, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ action:'checkAdminPass', password: input, token: API_TOKEN })
-    });
+    const hashed = await sha256Client(input);
+    const url = GAS_URL + '?action=checkAdminPassHash&hash=' + encodeURIComponent(hashed) + '&token=' + encodeURIComponent(API_TOKEN);
+    const res = await fetch(url);
     const data = await res.json();
     return data.ok === true && data.authorized === true;
   } catch(e) {
