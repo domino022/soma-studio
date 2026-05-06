@@ -923,7 +923,7 @@ border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;disp
 // ═══════════════════════════════════════════════════
 //  CONFIG — reemplaza con tu URL de Google Apps Script
 // ═══════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzdOgn05N6kJmj-YASD1asJ6sK3e-8cDkQ58Rg6Atzs9q3yNPbB8Zqiv1XAfzpTpQoy/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwJESK_gOBu8diCtt_rE3CSLyCoLzLCnFEF-rSQkJw4XjJIbdiLLGNYzIoPzvrAuXqI/exec';
 
 // localStorage persists between deploys — data comes from Google Sheets
 const ADMIN_PASS = 'studio2024'; // <-- cambia tu contraseña
@@ -941,7 +941,7 @@ const DB = {
     return v;
   },
   sync(k, v) {
-    // Retry up to 3 times if network fails
+    // Small delay to avoid race conditions, then retry up to 3 times
     const attempt = (retries) => {
       fetch(GAS_URL, {
         method:'POST',
@@ -949,10 +949,16 @@ const DB = {
         body: JSON.stringify({ action:'set', key:k, value:v })
       })
       .then(r => r.json())
-      .then(d => { if(!d.ok && retries > 0) setTimeout(()=>attempt(retries-1), 2000); })
-      .catch(() => { if(retries > 0) setTimeout(()=>attempt(retries-1), 2000); });
+      .then(d => {
+        if(d.ok) {
+          console.log('☁️ Sheets sync OK:', k);
+        } else if(retries > 0) {
+          setTimeout(()=>attempt(retries-1), 3000);
+        }
+      })
+      .catch(() => { if(retries > 0) setTimeout(()=>attempt(retries-1), 3000); });
     };
-    attempt(3);
+    setTimeout(()=>attempt(3), 200);
   },
   async pull(k) {
     if(!GAS_URL) return this.get(k);
@@ -1222,19 +1228,22 @@ window.addEventListener('load', async ()=>{
       if(data.ok) {
         const keys = ['plans','disciplines','teachers','clients','classes','bookings','undo_history'];
         keys.forEach(k => {
-          // Only update localStorage if Sheets has real data (not null)
-          if(data[k] !== null && data[k] !== undefined) {
-            localStorage.setItem('se3_'+k, JSON.stringify(data[k]));
+          const sheetsVal = data[k];
+          // ONLY overwrite localStorage if Sheets has REAL data (non-empty array/object)
+          // Never overwrite with empty arrays — that would erase local data
+          const isRealData = sheetsVal !== null && sheetsVal !== undefined &&
+            !(Array.isArray(sheetsVal) && sheetsVal.length === 0);
+          if(isRealData) {
+            localStorage.setItem('se3_'+k, JSON.stringify(sheetsVal));
           }
         });
-        console.log('✅ Soma Studio: datos cargados desde Google Sheets');
+        console.log('✅ Soma Studio: datos sincronizados desde Google Sheets');
       }
     } catch(e) {
       console.log('⚠️ Sin conexión — usando datos locales:', e.message);
     }
   }
-  // Step 2: Apply local defaults ONLY for keys not already in localStorage
-  // This never writes to Sheets — just fills gaps for offline use
+  // Step 2: Apply local defaults ONLY for keys not in localStorage yet
   seedData();
 
   // Step 3: Show app
