@@ -927,30 +927,25 @@ border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;disp
 // ═══════════════════════════════════════════════════
 //  CONFIG — reemplaza con tu URL de Google Apps Script
 // ═══════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwPbOYfSDCFdp2MJXYeAePXPeXmuHgHHJM5-qBGxW-E62DCR7BTxsKuBygvJnHDlijt/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyS_zwWQ4z_NylV4RELHf5IyoYdVFjFgiJQ15rHFCEdTu8YRVGrJm-IimUBoAb70Yoq/exec';
 const API_TOKEN = 'de58fd7996baaa6ca5161fee72cef1ba9574e457e43bbaaf6906bf026b9bcf7e'; // App token — authenticates requests to backend
 
 // localStorage persists between deploys — data comes from Google Sheets
 // Admin password validated in Google Apps Script backend
 // Never stored or visible in this file
-async function sha256Client(message) {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 async function checkAdminPass(input) {
-  // Hashea en cliente antes de enviar — nunca viaja la contraseña en texto plano
-  // Usa GET para evitar el problema de body perdido en redirects de Google Apps Script
+  // Verificación 100% en el backend — nunca local
+  // Si no hay conexión, no se puede entrar (más seguro)
   if(!GAS_URL) {
     showToast('Sin conexión al servidor');
     return false;
   }
   try {
-    const hashed = await sha256Client(input);
-    const url = GAS_URL + '?action=checkAdminPassHash&hash=' + encodeURIComponent(hashed) + '&token=' + encodeURIComponent(API_TOKEN);
-    const res = await fetch(url);
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'checkAdminPass', password: input, token: API_TOKEN })
+    });
     const data = await res.json();
     return data.ok === true && data.authorized === true;
   } catch(e) {
@@ -962,54 +957,71 @@ async function checkAdminPass(input) {
 // ═══════════════════════════════════════════════════
 //  DB: localStorage con capa para Google Sheets
 // ═══════════════════════════════════════════════════
+// ── Caché en memoria — fuente de verdad es Google Sheets ──────────
+// Los datos se cargan de Sheets al inicio y se mantienen en memoria.
+// DB.get/set son síncronos sobre el caché; las escrituras se envían
+// a Sheets en background. DB.reload() fuerza re-lectura de Sheets.
+const _cache = {};
+const _ALL_KEYS = ['plans','disciplines','teachers','clients','classes','bookings','undo_history'];
+
 const DB = {
+  // Lee del caché en memoria (ya cargado desde Sheets)
   get(k) {
-    try { return JSON.parse(localStorage.getItem('se3_'+k)); } catch { return null; }
+    return _cache[k] !== undefined ? _cache[k] : null;
   },
+  // Escribe en caché y envía a Sheets en background
   set(k, v) {
-    localStorage.setItem('se3_'+k, JSON.stringify(v));
-    if(GAS_URL) this.sync(k, v); // sync to Sheets in background
-    return v;
-  },
-  sync(k, v) {
-    // Small delay to avoid race conditions, then retry up to 3 times
-    const attempt = (retries) => {
+    _cache[k] = v;
+    if(GAS_URL) {
       fetch(GAS_URL, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ action:'set', key:k, value:v, token:API_TOKEN })
       })
-      .then(r => r.json())
-      .then(d => {
-        if(d.ok) {
-          console.log('☁️ Sheets sync OK:', k);
-        } else if(retries > 0) {
-          setTimeout(()=>attempt(retries-1), 3000);
-        }
-      })
-      .catch(() => { if(retries > 0) setTimeout(()=>attempt(retries-1), 3000); });
-    };
-    setTimeout(()=>attempt(3), 200);
+      .then(r=>r.json())
+      .then(d=>{ if(d.ok) console.log('☁️ Sheets OK:',k); else console.error('❌ Sheets:',k,d.error); })
+      .catch(e=>console.error('❌ Sheets error:',k,e));
+    }
+    return v;
   },
-  async pull(k) {
-    if(!GAS_URL) return this.get(k);
+  // Carga TODOS los datos de Sheets en una sola llamada
+  async pullAll() {
+    if(!GAS_URL) return false;
     try {
-      const r = await fetch(`${GAS_URL}?action=get&key=${k}&token=${API_TOKEN}`);
+      const r = await fetch(`${GAS_URL}?action=getAll&token=${API_TOKEN}`);
+      const data = await r.json();
+      if(data.ok) {
+        _ALL_KEYS.forEach(k => {
+          if(data[k] !== null && data[k] !== undefined) _cache[k] = data[k];
+          else if(_cache[k] === undefined) _cache[k] = null;
+        });
+        console.log('☁️ pullAll OK — datos frescos de Sheets');
+        return true;
+      }
+    } catch(e) { console.error('❌ pullAll error:', e); }
+    return false;
+  },
+  // Recarga datos frescos de Sheets y re-renderiza la vista actual
+  async reload() {
+    Object.keys(_cache).forEach(k => delete _cache[k]);
+    await this.pullAll();
+  },
+  // def: inicializa clave solo si no existe (chequea Sheets)
+  async def(k, v) {
+    if(_cache[k] !== null && _cache[k] !== undefined) return _cache[k];
+    // Si el caché está vacío para esta clave, intenta pull individual
+    if(!GAS_URL) { _cache[k] = v; return v; }
+    try {
+      const r = await fetch(`${GAS_URL}?action=get&key=${encodeURIComponent(k)}&token=${API_TOKEN}`);
       const data = await r.json();
       if(data.ok && data.value !== null && data.value !== undefined) {
-        localStorage.setItem('se3_'+k, JSON.stringify(data.value));
+        _cache[k] = data.value;
         return data.value;
       }
     } catch(e) {}
-    return this.get(k); // fallback to localStorage
-  },
-  def(k, v) {
-    // LOCAL ONLY — never writes to Google Sheets
-    // Only sets default if key doesn't exist in localStorage
-    if(localStorage.getItem('se3_'+k) === null) {
-      localStorage.setItem('se3_'+k, JSON.stringify(v));
-    }
-    return this.get(k);
+    // No existe en Sheets — crear con valor por defecto
+    this.set(k, v);
+    return v;
   }
 };
 
@@ -1157,11 +1169,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // ═══════════════════════════════════════════════════
 //  SEED DATA
 // ═══════════════════════════════════════════════════
-function seedData() {
-  // Plans — admin configures these
-  DB.def('plans', []);
-  // Disciplines — seed with base types, admin can edit
-  DB.def('disciplines', [
+async function seedData() {
+  // Solo inicializa claves que no existen en Sheets
+  await DB.def('plans', []);
+  await DB.def('disciplines', [
     {id:'d1',name:'Pilates Mat',      color:'#0D0D0D',bg:'#EDE8ED'},
     {id:'d2',name:'Pilates Reformer', color:'#0D0D0D',bg:'#EDE8ED'},
     {id:'d3',name:'Barre',            color:'#2a3a60',bg:'#E8EBF5'},
@@ -1169,10 +1180,10 @@ function seedData() {
     {id:'d5',name:'Ballet Adultas',   color:'#5C5060',bg:'#EDE8ED'},
     {id:'d6',name:'Taller Especial',  color:'#2a5030',bg:'#E8F0E8'},
   ]);
-  DB.def('teachers', []);
-  DB.def('clients', []);
-  DB.def('classes', []);
-  DB.def('bookings', []);
+  await DB.def('teachers', []);
+  await DB.def('clients', []);
+  await DB.def('classes', []);
+  await DB.def('bookings', []);
 }
 
 function buildSampleClasses() {
@@ -1301,33 +1312,17 @@ function thisMonthKey() { return monthKey(new Date().getFullYear(), new Date().g
 //  INIT
 // ═══════════════════════════════════════════════════
 window.addEventListener('load', async ()=>{
+  // Paso 1: Cargar TODOS los datos desde Google Sheets
   if(GAS_URL) {
-    try {
-      // Step 1: Pull ALL data from Google Sheets
-      const res = await fetch(`${GAS_URL}?action=getAll&token=${API_TOKEN}`);
-      const data = await res.json();
-      if(data.ok) {
-        const keys = ['plans','disciplines','teachers','clients','classes','bookings','undo_history'];
-        keys.forEach(k => {
-          const sheetsVal = data[k];
-          // ONLY overwrite localStorage if Sheets has REAL data (non-empty array/object)
-          // Never overwrite with empty arrays — that would erase local data
-          const isRealData = sheetsVal !== null && sheetsVal !== undefined &&
-            !(Array.isArray(sheetsVal) && sheetsVal.length === 0);
-          if(isRealData) {
-            localStorage.setItem('se3_'+k, JSON.stringify(sheetsVal));
-          }
-        });
-        console.log('✅ Soma Studio: datos sincronizados desde Google Sheets');
-      }
-    } catch(e) {
-      console.log('⚠️ Sin conexión — usando datos locales:', e.message);
-    }
+    const ok = await DB.pullAll();
+    if(!ok) console.warn('⚠️ Sin conexión a Google Sheets — app sin datos');
+    else console.log('✅ Soma Studio: datos cargados desde Google Sheets');
   }
-  // Step 2: Apply local defaults ONLY for keys not in localStorage yet
-  seedData();
 
-  // Step 3: Show app
+  // Paso 2: Inicializar claves que no existen aún en Sheets
+  await seedData();
+
+  // Paso 3: Mostrar app
   const lo = document.getElementById('loadingOverlay');
   lo.classList.add('hidden');
   setTimeout(()=>{ lo.style.display='none'; goSplash(); }, 400);
@@ -1484,7 +1479,8 @@ function doConfirmPlan() {
 }
 
 // ─── CALENDAR ───
-function renderCalendar() {
+async function renderCalendar() {
+  await DB.pullAll();
   document.getElementById('cCalTitle').textContent=`${MONTHS[calM]} ${calY}`;
   const classes=(DB.get('classes')||[]).filter(c=>c.active);
   const today=new Date();
@@ -1973,11 +1969,13 @@ async function doAdminLogin() {
 function doLogoutAdmin() { showView('adminLoginView'); }
 
 // ─── ADMIN TAB ROUTER ───
-function switchAdmin(tab, btn) {
+async function switchAdmin(tab, btn) {
   document.querySelectorAll('.admin-tab').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   const tabs=['dash','notif','clases','alumnas','profes','planes','disc','ingresos','undo'];
   tabs.forEach(t=>document.getElementById('atab-'+t).style.display=t===tab?'block':'none');
+  // Recargar datos frescos de Sheets antes de renderizar
+  await DB.pullAll();
   const fn={dash:renderDash,notif:renderNotifications,clases:renderAdminClases,alumnas:renderAlumnas,
     profes:renderProfes,planes:renderPlanes,disc:renderDiscs,ingresos:renderIngresos,undo:renderUndoHistory};
   fn[tab]?.();
